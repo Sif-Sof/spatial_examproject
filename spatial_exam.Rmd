@@ -1,0 +1,233 @@
+---
+title: "Spatial exam: Værnemagere and Tyskerpiger in Odense 1943"
+author: "Sofie Frederiksen"
+date: "2025-05-31"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# packages and libraries
+
+```{r}
+install.packages("leaflet")
+install.packages("tidyverse")
+install.packages("dplyr")
+install.packages("geosphere")
+install.packages("ggplot2")
+install.packages("spatstat.geom")
+install.packages ("spatstat.explore")
+```
+
+```{r}
+library(leaflet)
+library(tidyverse)
+library(dplyr)
+library(geosphere)
+library(ggplot2)
+library(spatstat.geom)
+library(spatstat.explore)
+library(sf)
+```
+
+#Loading and Cleaning the data
+
+I load 3 datasets one for the women in relationships with the germans, one for merchants known to sympatize with the germans and one with the coordinates for the approxiamte place Trods Alt was printed and for Kasernen(?)
+
+
+```{r}
+women <- read.csv2("data/tyskertøser.csv") %>% 
+  mutate(category= "women",
+         latitude = as.numeric(`latitude`),
+         longitude = as.numeric(longitude)) %>%
+  drop_na(latitude, longitude)
+print(women)
+collaborator <- read.csv2("data/sympatisører.csv") %>% 
+  mutate(category= "collaborator",
+         latitude = as.numeric(`latitude`),
+         longitude = as.numeric(longitude))%>%
+  drop_na(latitude, longitude)
+head(collaborator)
+important_places <- read.csv2("data/vigtige_adresser.csv") %>% 
+  mutate(category= "important_places",
+         latitude = as.numeric(`latitude`),
+         longitude = as.numeric(longitude))%>%
+  drop_na(latitude, longitude)
+head(important_places)
+
+data<- bind_rows(women, collaborator, important_places)
+
+```
+
+# Mapping my data
+```{r}
+# Plot the map
+leaflet(data) %>%
+  addTiles() %>%
+  setView(lng = 10.4083, lat = 55.3961, zoom = 12) %>%
+  addCircleMarkers(
+    data = women,
+    lng = ~longitude, lat = ~latitude,
+    color = "red", fillColor = "red",
+    radius = 3,
+    group = "women",
+    popup = ~adresse
+  ) %>%
+  addCircleMarkers(
+    data = collaborator,
+    lng = ~longitude, lat = ~latitude,
+    color = "blue", fillColor = "blue",
+    radius = 3,
+    group = "collaborator",
+    popup = ~adresse
+  ) %>%
+   addCircleMarkers(
+    data = important_places,
+    lng = ~longitude, lat = ~latitude,
+    color = "black", fillColor = "black",
+    radius = 3,
+    group = "important_places",
+    popup = ~adresse
+  ) %>%
+ 
+  addLayersControl(
+    overlayGroups = c("women", "sympatizer", "important_places"),
+    options = layersControlOptions(collapsed = FALSE)
+  )
+
+```
+
+## Analysis
+
+### Ripley k-function
+
+```{r}
+# Step 2: Convert to sf object with WGS84 (lat/lon)
+sf_points <- st_as_sf(women, coords = c("longitude", "latitude"), crs = 4326)
+
+# Step 3: Transform to a projected CRS for distance (UTM zone 32N for Denmark)
+sf_projected_women <- st_transform(sf_points, crs = 32632)
+
+# Step 4: Extract projected coordinates
+coords_proj <- st_coordinates(sf_projected_women)
+
+# Step 5: Create spatstat point pattern (ppp object)
+# Define observation window
+win <- owin(
+  xrange = range(coords_proj[,1]),  # X = Easting
+  yrange = range(coords_proj[,2])   # Y = Northing
+)
+
+points_ppp <- ppp(
+  x = coords_proj[,1],
+  y = coords_proj[,2],
+  window = win
+)
+
+# Step 6: Compute Ripley's K-function
+K_result <- Kest(points_ppp, correction = "Ripley")
+
+# Step 7: Plot the K-function
+plot(K_result, main = "Ripley’s K-function")
+
+# Optional: Add simulation envelope (to compare against randomness)
+envelope_K <- envelope(points_ppp, Kest, nsim = 99)
+plot(envelope_K, main = "Fig 1: Ripley’s K-function with CSR Envelope women")
+
+```
+
+```{r}
+
+# Step 2: Convert to sf object with WGS84 (lat/lon)
+sf_points <- st_as_sf(collaborator, coords = c("longitude", "latitude"), crs = 4326)
+
+# Step 3: Transform to a projected CRS for distance (UTM zone 32N for Denmark)
+sf_projected_collaborator <- st_transform(sf_points, crs = 32632)
+
+# Step 4: Extract projected coordinates
+coords_proj <- st_coordinates(sf_projected_collaborator)
+
+# Step 5: Create spatstat point pattern (ppp object)
+# Define observation window
+win <- owin(
+  xrange = range(coords_proj[,1]),  # X = Easting
+  yrange = range(coords_proj[,2])   # Y = Northing
+)
+
+points_ppp <- ppp(
+  x = coords_proj[,1],
+  y = coords_proj[,2],
+  window = win
+)
+
+# Step 6: Compute Ripley's K-function
+K_result <- Kest(points_ppp, correction = "Ripley")
+
+# Step 7: Plot the K-function
+plot(K_result, main = "Ripley’s K-function")
+
+# Optional: Add simulation envelope (to compare against randomness)
+envelope_K <- envelope(points_ppp, Kest, nsim = 99)
+plot(envelope_K, main = "Fig 2: Ripley’s K-function with CSR Envelope collaborator")
+
+```
+
+```{r}
+
+# Get all coordinates
+coords <- st_coordinates(sf_projected_women)
+center1 <- coords[1, ]
+center2 <- coords[2, ]
+
+radii <- seq(0, 3000, by = 100)
+get_counts <- function(center, coords, radii) {
+  dists <- sqrt((coords[,1] - center[1])^2 + (coords[,2] - center[2])^2)
+  sapply(radii, function(r) sum(dists <= r))
+}
+counts1 <- get_counts(center1, coords, radii)
+counts2 <- get_counts(center2, coords, radii)
+
+plot(radii, counts1, type = "l", col = "blue", lwd = 2,
+     xlab = "Distance from center (meters)",
+     ylab = "Cumulative number of points",
+     main = "Fig 3: Custom K-like Plot from Two Centers Women")
+
+lines(radii, counts2, col = "red", lwd = 2)
+
+legend("bottomright",
+       legend = c("Palnatokesvej", "Kasernen"),
+       col = c("blue", "red"),
+       lwd = 2)
+```
+
+```{r}
+
+# Get all coordinates
+coords <- st_coordinates(sf_projected_collaborator)
+center1 <- coords[1, ]
+center2 <- coords[2, ]
+
+radii <- seq(0, 3000, by = 100)
+get_counts <- function(center, coords, radii) {
+  dists <- sqrt((coords[,1] - center[1])^2 + (coords[,2] - center[2])^2)
+  sapply(radii, function(r) sum(dists <= r))
+}
+counts1 <- get_counts(center1, coords, radii)
+counts2 <- get_counts(center2, coords, radii)
+
+plot(radii, counts1, type = "l", col = "blue", lwd = 2,
+     xlab = "Distance from center (meters)",
+     ylab = "Cumulative number of points",
+     main = "Custom K-like Plot from Two Centers")
+
+lines(radii, counts2, col = "red", lwd = 2)
+
+legend("bottomright",
+       legend = c("Palnatokesvej", "Kasernen"),
+       col = c("blue", "red"),
+       lwd = 2)
+
+```
+
